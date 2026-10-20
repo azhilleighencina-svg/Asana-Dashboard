@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sum of Manhours - Asana Live Dashboard</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js and DataLabels Plugin -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+
+    <script>
+        let manhoursChart = null;
+
+        async function fetchData() {
+            const btn = document.getElementById('refresh-btn');
+            const statusIndicator = document.getElementById('sync-status');
+            const errorBanner = document.getElementById('error-banner');
+            
+            if (btn) {
+                btn.classList.add('animate-pulse');
+                btn.innerHTML = '<i class="fa-solid fa-arrows-rotate animate-spin mr-2"></i> Syncing...';
+            }
+
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+
+                if (data.error) {
+                    errorBanner.innerText = data.message;
+                    errorBanner.classList.remove('hidden');
+                    statusIndicator.innerText = "Sync Failed";
+                    statusIndicator.className = "text-red-400 font-medium";
+                    return;
+                } else {
+                    errorBanner.classList.add('hidden');
+                }
+
+                renderDashboard(data);
+                renderChart(data);
+                
+                const now = new Date();
+                if (statusIndicator) {
+                    statusIndicator.innerText = `Last synced: ${now.toLocaleTimeString()}`;
+                    statusIndicator.className = "text-emerald-400 font-medium";
+                }
+            } catch (err) {
+                console.error("Error fetching live data:", err);
+                errorBanner.innerText = "Network or server error occurred while connecting to Flask backend.";
+                errorBanner.classList.remove('hidden');
+            } finally {
+                if (btn) {
+                    btn.classList.remove('animate-pulse');
+                    btn.innerHTML = '<i class="fa-solid fa-rotate-right mr-2"></i> Refresh Now';
+                }
+            }
+        }
+
+        function formatK(num) {
+            if (num >= 1000) {
+                return (num / 1000).toFixed(1) + 'K';
+            }
+            return num % 1 === 0 ? num : num.toFixed(1);
+        }
+
+        function renderChart(data) {
+            const assignees = data.assignees;
+            const matrix = data.matrix;
+
+            const opsData = assignees.map(name => matrix[name]["Operations & Support"] || 0);
+            const projData = assignees.map(name => matrix[name]["Project Delivery"] || 0);
+
+            const ctx = document.getElementById('manhoursChart').getContext('2d');
+
+            if (manhoursChart) {
+                manhoursChart.destroy();
+            }
+
+            manhoursChart = new Chart(ctx, {
+                type: 'bar',
+                plugins: [ChartDataLabels],
+                data: {
+                    labels: assignees,
+                    datasets: [
+                        {
+                            label: 'Operations & Support',
+                            data: opsData,
+                            backgroundColor: '#6366f1', // Indigo
+                            borderRadius: { topLeft: 0, topRight: 0, bottomLeft: 4, bottomRight: 4 },
+                            borderSkipped: false
+                        },
+                        {
+                            label: 'Project Delivery',
+                            data: projData,
+                            backgroundColor: '#10b981', // Emerald Green
+                            borderRadius: { topLeft: 6, topRight: 6, bottomLeft: 0, bottomRight: 0 },
+                            borderSkipped: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            stacked: true,
+                            grid: { display: false },
+                            ticks: {
+                                color: '#94a3b8',
+                                font: { size: 12, weight: '600' },
+                                maxRotation: 45,
+                                minRotation: 25
+                            }
+                        },
+                        y: {
+                            stacked: true,
+                            grid: { color: '#334155' },
+                            ticks: {
+                                color: '#94a3b8',
+                                callback: function(value) { return formatK(value); }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            align: 'end',
+                            labels: { color: '#e2e8f0', font: { size: 13, weight: 'bold' }, usePointStyle: true }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.raw.toLocaleString()} hrs`;
+                                }
+                            }
+                        },
+                        datalabels: {
+                            anchor: 'end',
+                            align: 'top',
+                            color: '#ffffff',
+                            font: { weight: 'bold', size: 12 },
+                            formatter: function(value, context) {
+                                const datasetIndex = context.datasetIndex;
+                                const dataIndex = context.dataIndex;
+
+                                // Only display total label on the top stack layer (Project Delivery layer)
+                                if (datasetIndex === 1) {
+                                    const total = opsData[dataIndex] + projData[dataIndex];
+                                    return total > 0 ? formatK(total) : '';
+                                }
+                                return '';
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderDashboard(data) {
+            const assignees = data.assignees;
+            const matrix = data.matrix;
+
+            let totalOps = 0;
+            let totalProj = 0;
+
+            const headerRow = document.getElementById('header-row');
+            const opsRow = document.getElementById('ops-row');
+            const projRow = document.getElementById('proj-row');
+            const totalRow = document.getElementById('total-row');
+            const opsPctRow = document.getElementById('ops-pct-row');
+            const projPctRow = document.getElementById('proj-pct-row');
+            const totalPctRow = document.getElementById('total-pct-row');
+
+            headerRow.innerHTML = '<th class="px-5 py-3 border border-slate-300 bg-sky-200 text-slate-800 text-left font-bold sticky left-0 z-20 shadow-md min-w-[220px]">Row Labels</th>';
+            opsRow.innerHTML = '<td class="px-5 py-3 border border-slate-300 font-semibold text-slate-700 bg-white sticky left-0 z-10 shadow-sm">Operations & Support</td>';
+            projRow.innerHTML = '<td class="px-5 py-3 border border-slate-300 font-semibold text-slate-700 bg-white sticky left-0 z-10 shadow-sm">Project Delivery</td>';
+            totalRow.innerHTML = '<td class="px-5 py-3 border border-slate-300 font-bold text-slate-900 bg-sky-100 sticky left-0 z-10 shadow-sm">Grand Total</td>';
+            opsPctRow.innerHTML = '<td class="px-5 py-3 border border-slate-300 font-semibold text-slate-700 bg-white sticky left-0 z-10 shadow-sm">Operations & Support (%)</td>';
+            projPctRow.innerHTML = '<td class="px-5 py-3 border border-slate-300 font-semibold text-slate-700 bg-white sticky left-0 z-10 shadow-sm">Project Delivery (%)</td>';
+            totalPctRow.innerHTML = '<td class="px-5 py-3 border border-slate-300 font-bold text-slate-900 bg-slate-100 sticky left-0 z-10 shadow-sm">Total</td>';
+
+            assignees.forEach(name => {
+                const opsVal = matrix[name] ? (matrix[name]["Operations & Support"] || 0) : 0;
+                const projVal = matrix[name] ? (matrix[name]["Project Delivery"] || 0) : 0;
+                const grandTotal = opsVal + projVal;
+
+                totalOps += opsVal;
+                totalProj += projVal;
+
+                const opsPct = grandTotal > 0 ? (opsVal / grandTotal) : 0;
+                const projPct = grandTotal > 0 ? (projVal / grandTotal) : 0;
+
+                const th = document.createElement('th');
+                th.className = "px-5 py-3 border border-slate-300 bg-sky-200 text-slate-800 font-bold text-center whitespace-nowrap min-w-[140px]";
+                th.innerText = name;
+                headerRow.appendChild(th);
+
+                const tdOps = document.createElement('td');
+                tdOps.className = "px-5 py-3 border border-slate-300 text-center font-medium text-slate-700 bg-white";
+                tdOps.innerText = opsVal.toLocaleString();
+                opsRow.appendChild(tdOps);
+
+                const tdProj = document.createElement('td');
+                tdProj.className = "px-5 py-3 border border-slate-300 text-center font-medium text-slate-700 bg-white";
+                tdProj.innerText = projVal.toLocaleString();
+                projRow.appendChild(tdProj);
+
+                const tdTotal = document.createElement('td');
+                tdTotal.className = "px-5 py-3 border border-slate-300 text-center font-bold text-sky-900 bg-sky-100";
+                tdTotal.innerText = grandTotal.toLocaleString();
+                totalRow.appendChild(tdTotal);
+
+                const tdOpsPct = document.createElement('td');
+                tdOpsPct.className = "px-5 py-3 border border-slate-300 text-center font-medium text-slate-600 bg-white";
+                tdOpsPct.innerText = grandTotal > 0 ? (opsPct * 100).toFixed(1) + '%' : '0%';
+                opsPctRow.appendChild(tdOpsPct);
+
+                const tdProjPct = document.createElement('td');
+                tdProjPct.className = "px-5 py-3 border border-slate-300 text-center font-medium text-slate-600 bg-white";
+                tdProjPct.innerText = grandTotal > 0 ? (projPct * 100).toFixed(1) + '%' : '0%';
+                projPctRow.appendChild(tdProjPct);
+
+                const tdTotalPct = document.createElement('td');
+                tdTotalPct.className = "px-5 py-3 border border-slate-300 text-center font-bold text-slate-800 bg-slate-100";
+                tdTotalPct.innerText = '100%';
+                totalPctRow.appendChild(tdTotalPct);
+            });
+
+            const grandTotalSum = totalOps + totalProj;
+            document.getElementById('kpi-total-hours').innerText = grandTotalSum.toLocaleString();
+            document.getElementById('kpi-ops-hours').innerText = totalOps.toLocaleString();
+            document.getElementById('kpi-proj-hours').innerText = totalProj.toLocaleString();
+            document.getElementById('kpi-members-count').innerText = assignees.length;
+
+            if (grandTotalSum > 0) {
+                const opsShare = ((totalOps / grandTotalSum) * 100).toFixed(1);
+                const projShare = ((totalProj / grandTotalSum) * 100).toFixed(1);
+                
+                document.getElementById('ops-bar').style.width = `${opsShare}%`;
+                document.getElementById('proj-bar').style.width = `${projShare}%`;
+                
+                document.getElementById('ops-label').innerText = `Ops & Support: ${opsShare}%`;
+                document.getElementById('proj-label').innerText = `Project Delivery: ${projShare}%`;
+            }
+        }
+
+        window.onload = () => {
+            fetchData();
+            setInterval(fetchData, 10000);
+        };
+    </script>
+</head>
+<body class="bg-slate-900 min-h-screen text-slate-100 font-sans p-4 md:p-8">
+
+    <div class="max-w-[1920px] mx-auto space-y-6">
+        
+        <!-- Header Bar -->
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <div class="flex items-center space-x-3">
+                    <div class="p-3 bg-sky-500/10 rounded-xl text-sky-400 border border-sky-500/20">
+                        <i class="fa-solid fa-chart-pivot text-2xl"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-extrabold text-white tracking-tight">Sum of Manhours</h1>
+                        <p class="text-sm text-slate-400 flex items-center space-x-2 mt-0.5">
+                            <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                            <span id="sync-status">Connecting to Asana...</span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <button id="refresh-btn" onclick="fetchData()" class="bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold px-5 py-2.5 rounded-xl shadow-lg shadow-sky-500/25 transition-all duration-200 flex items-center cursor-pointer">
+                <i class="fa-solid fa-rotate-right mr-2"></i> Refresh Now
+            </button>
+        </div>
+
+        <!-- Error Notification Banner -->
+        <div id="error-banner" class="hidden bg-red-500/10 border border-red-500/30 text-red-400 px-5 py-4 rounded-xl font-medium text-sm flex items-center shadow-lg"></div>
+
+        <!-- Metric KPI Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-slate-800 border border-slate-700/80 rounded-xl p-5 shadow-lg relative overflow-hidden">
+                <div class="flex justify-between items-center">
+                    <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Total Manhours</p>
+                    <i class="fa-solid fa-clock text-sky-400 text-xl"></i>
+                </div>
+                <p id="kpi-total-hours" class="text-3xl font-black text-white mt-2">0</p>
+                <div class="absolute bottom-0 left-0 right-0 h-1 bg-sky-500"></div>
+            </div>
+
+            <div class="bg-slate-800 border border-slate-700/80 rounded-xl p-5 shadow-lg relative overflow-hidden">
+                <div class="flex justify-between items-center">
+                    <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Operations & Support</p>
+                    <i class="fa-solid fa-headset text-indigo-400 text-xl"></i>
+                </div>
+                <p id="kpi-ops-hours" class="text-3xl font-black text-white mt-2">0</p>
+                <div class="absolute bottom-0 left-0 right-0 h-1 bg-indigo-500"></div>
+            </div>
+
+            <div class="bg-slate-800 border border-slate-700/80 rounded-xl p-5 shadow-lg relative overflow-hidden">
+                <div class="flex justify-between items-center">
+                    <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Project Delivery</p>
+                    <i class="fa-solid fa-rocket text-emerald-400 text-xl"></i>
+                </div>
+                <p id="kpi-proj-hours" class="text-3xl font-black text-white mt-2">0</p>
+                <div class="absolute bottom-0 left-0 right-0 h-1 bg-emerald-500"></div>
+            </div>
+
+            <div class="bg-slate-800 border border-slate-700/80 rounded-xl p-5 shadow-lg relative overflow-hidden">
+                <div class="flex justify-between items-center">
+                    <p class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Team Members</p>
+                    <i class="fa-solid fa-users text-amber-400 text-xl"></i>
+                </div>
+                <p id="kpi-members-count" class="text-3xl font-black text-white mt-2">0</p>
+                <div class="absolute bottom-0 left-0 right-0 h-1 bg-amber-500"></div>
+            </div>
+        </div>
+
+        <!-- Allocation Breakdown Bar -->
+        <div class="bg-slate-800 border border-slate-700/80 rounded-xl p-5 shadow-lg space-y-3">
+            <div class="flex justify-between text-xs font-semibold text-slate-300">
+                <span id="ops-label">Ops & Support: 0%</span>
+                <span id="proj-label">Project Delivery: 0%</span>
+            </div>
+            <div class="w-full h-3 bg-slate-700 rounded-full overflow-hidden flex">
+                <div id="ops-bar" class="h-full bg-indigo-500 transition-all duration-500" style="width: 50%"></div>
+                <div id="proj-bar" class="h-full bg-emerald-500 transition-all duration-500" style="width: 50%"></div>
+            </div>
+        </div>
+
+        <!-- NEW: Stacked Bar Chart (Matches Asana Sorting & Formatting) -->
+        <div class="bg-slate-800 border border-slate-700/80 rounded-2xl p-6 shadow-xl">
+            <h2 class="text-lg font-bold text-white mb-4 flex items-center">
+                <i class="fa-solid fa-chart-column text-indigo-400 mr-2"></i> Sum of Manhours by Project Member
+            </h2>
+            <div class="relative h-[380px] w-full">
+                <canvas id="manhoursChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Main Pivot Table Container -->
+        <div class="bg-white rounded-2xl shadow-2xl overflow-hidden border border-slate-300">
+            <div class="overflow-x-auto max-h-[65vh]">
+                <table class="w-full border-collapse text-sm">
+                    <thead>
+                        <tr id="header-row" class="sticky top-0 z-30"></tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200">
+                        <tr id="ops-row" class="hover:bg-slate-50 transition-colors"></tr>
+                        <tr id="proj-row" class="hover:bg-slate-50 transition-colors"></tr>
+                        <tr id="total-row" class="font-bold"></tr>
+                        <tr id="ops-pct-row" class="hover:bg-slate-50 transition-colors border-t-2 border-slate-300"></tr>
+                        <tr id="proj-pct-row" class="hover:bg-slate-50 transition-colors"></tr>
+                        <tr id="total-pct-row" class="font-bold"></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+</body>
+</html>
